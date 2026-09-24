@@ -1,6 +1,6 @@
 # Flyover
 
-Next.js POC: enter two addresses and Mapbox draws the **great-circle flight path** between them (not a road route), then animates a plane along it on a 3D globe.
+Next.js POC: pick a bird, enter two addresses, and watch the bird fly the **great-circle path** between them (a straight line over the globe, not a road route) at that species' real average cruising speed.
 
 ## Run
 
@@ -12,8 +12,29 @@ npm run dev
 
 Open http://localhost:3000.
 
+## Using it
+
+1. Pick a bird tile: **Pigeon**, **Seagull**, or **Mourning Dove**. You must pick one before **Fly** is enabled.
+2. Enter a From and To address and click **Fly**.
+3. The bird flies the route in **real time** at its average cruising speed. The panel shows the distance, the bird's total flight time, and a live elapsed clock.
+
+You can switch birds mid-flight: the icon and speed change immediately and the clock recalculates. **Replay flight** restarts the current route.
+
+| Bird | Speed used | Typical cruising range |
+|---|---|---|
+| Pigeon | 72 km/h (45 mph) | 40–50 mph |
+| Seagull (herring gull) | 35 km/h (22 mph) | 20–25 mph |
+| Mourning dove | 56 km/h (35 mph) | 30–40 mph |
+
+Because flights are real time, long routes take a long time: San Francisco → Tokyo is about 115 hours for a pigeon. Use nearby addresses to see visible movement.
+
+### Hidden time-lapse slider
+
+A logarithmic time-lapse slider (1× to 100,000×) is built in but hidden, and the default is 1× (real time). To show it, remove the `hidden` wrapper around the slider in `src/components/FlightMap.tsx`. You can change `DEFAULT_SPEED_EXP` in that file to set a different starting speed (the multiplier is 10 to that power).
+
 ## How it works
 
-- `src/lib/geocode.ts` — turns each address into coordinates via the Mapbox Geocoding v6 API.
-- `src/lib/geo.ts` — computes the great-circle arc (spherical interpolation), distance, and bearing. Longitudes are unwrapped so routes crossing the date line (e.g. SF → Tokyo) stay continuous.
-- `src/components/FlightMap.tsx` — Mapbox GL globe, dashed full route, animated solid "flown" line, and a rotating plane marker.
+- `src/lib/birds.ts`: each bird's name, cruising speed, and top-down SVG icon. The icons point north so the map marker can rotate to the direction of travel.
+- `src/lib/geocode.ts`: turns each address into coordinates with the Mapbox Geocoding v6 API.
+- `src/lib/geo.ts`: computes the great-circle path, distance, and heading. Longitudes are unwrapped so routes crossing the date line stay continuous.
+- `src/components/FlightMap.tsx`: the Mapbox GL globe, bird tiles, dashed full route, solid "flown" line, and the rotating bird marker. Each frame advances the bird by distance flown at the selected bird's speed.
