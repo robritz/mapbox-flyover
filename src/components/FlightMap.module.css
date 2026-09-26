@@ -188,3 +188,8 @@
   color: #94a3b8;
   text-align: center;
 }
+
+.actions {
+  display: flex;
+  gap: 16px;
+}

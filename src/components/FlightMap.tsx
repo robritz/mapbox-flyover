@@ -1,12 +1,13 @@
 "use client";
 
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, useEffect, useEffectEvent, useRef, useState } from "react";
 import type { Feature, LineString } from "geojson";
 import type { GeoJSONSource, Map as MapboxMap, Marker } from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 import { BIRDS, type Bird } from "@/lib/birds";
-import { bearing, distanceKm, greatCircle, type LngLat } from "@/lib/geo";
-import { geocode, type Place } from "@/lib/geocode";
+import { birdOf, kmFlown, loadFlight, rebase, restart, saveFlight, totalKm, type Flight } from "@/lib/flight";
+import { bearing, greatCircle, type LngLat } from "@/lib/geo";
+import { geocode } from "@/lib/geocode";
 import styles from "./FlightMap.module.css";
 
 const TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN ?? "";
@@ -45,6 +46,19 @@ function describeSecond(multiplier: number): string {
 
 type mapboxgl = typeof import("mapbox-gl").default;
 
+// Zoom used when reopening a flight: close enough to see the bird move
+// (a pigeon crosses roughly 1px every 2s at this level).
+const BIRD_ZOOM = 12;
+
+/** Point `t` (0–1) of the way along `path`, plus the segment it sits on. */
+function pointAlong(path: LngLat[], t: number) {
+  const idx = Math.min(path.length - 2, Math.floor(t * (path.length - 1)));
+  const frac = t * (path.length - 1) - idx;
+  const [a, b] = [path[idx], path[idx + 1]];
+  const here: LngLat = [a[0] + (b[0] - a[0]) * frac, a[1] + (b[1] - a[1]) * frac];
+  return { idx, a, b, here };
+}
+
 const lineFeature = (coords: LngLat[]): Feature<LineString> => ({
   type: "Feature",
   properties: {},
@@ -58,10 +72,9 @@ export default function FlightMap() {
   const markersRef = useRef<Marker[]>([]);
   const frameRef = useRef<number | null>(null);
   const pathRef = useRef<LngLat[]>([]);
-  // Read every frame so slider changes apply mid-flight.
+  // Read every frame so bird/speed changes apply mid-flight.
+  const flightRef = useRef<Flight | null>(null);
   const speedRef = useRef(10 ** DEFAULT_SPEED_EXP);
-  // Read every frame so switching birds mid-flight changes speed immediately.
-  const birdRef = useRef<Bird | null>(null);
   // Updated imperatively each frame to avoid re-rendering at 60fps.
   const clockRef = useRef<HTMLSpanElement>(null);
 
@@ -73,7 +86,100 @@ export default function FlightMap() {
   const [bird, setBird] = useState<Bird | null>(null);
   const [speedExp, setSpeedExp] = useState(DEFAULT_SPEED_EXP);
   const speed = 10 ** speedExp;
-  const [trip, setTrip] = useState<{ from: Place; to: Place; km: number } | null>(null);
+  const [flight, setFlight] = useState<Flight | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  /** Make `f` the current flight everywhere: animation, UI, URL and storage. */
+  function commit(f: Flight) {
+    flightRef.current = f;
+    setFlight(f);
+    saveFlight(f);
+  }
+
+  /**
+   * Draw the route and markers for `f`, then start animating. A new flight is
+   * framed whole; a resumed one (`focusBird`) starts zoomed in on the bird.
+   */
+  function showFlight(f: Flight, { focusBird = false } = {}) {
+    const map = mapRef.current;
+    const mapboxgl = libRef.current;
+    if (!map || !mapboxgl) return;
+
+    const path = greatCircle(f.from.coords, f.to.coords);
+    pathRef.current = path;
+
+    markersRef.current.forEach((m) => m.remove());
+    const flyerEl = document.createElement("div");
+    flyerEl.innerHTML = birdOf(f).svg;
+    markersRef.current = [
+      new mapboxgl.Marker({ color: "#22c55e" }).setLngLat(path[0]).addTo(map),
+      new mapboxgl.Marker({ color: "#ef4444" }).setLngLat(path[path.length - 1]).addTo(map),
+      new mapboxgl.Marker({ element: flyerEl, rotationAlignment: "map" }).setLngLat(path[0]).addTo(map),
+    ];
+
+    (map.getSource("route") as GeoJSONSource).setData(lineFeature(path));
+    (map.getSource("progress") as GeoJSONSource).setData(lineFeature([]));
+
+    if (focusBird) {
+      const total = totalKm(f);
+      const { here } = pointAlong(path, total ? kmFlown(f, Date.now()) / total : 1);
+      map.jumpTo({ center: here, zoom: BIRD_ZOOM });
+      animate();
+      return;
+    }
+
+    const bounds = path.reduce((b, p) => b.extend(p), new mapboxgl.LngLatBounds(path[0], path[0]));
+    map.fitBounds(bounds, { padding: { top: 80, bottom: 80, left: 380, right: 80 }, maxZoom: 9, duration: 1500 });
+    map.once("moveend", animate);
+  }
+
+  function animate() {
+    const map = mapRef.current;
+    const flyer = markersRef.current[2];
+    const path = pathRef.current;
+    if (!map || !flyer || path.length < 2) return;
+
+    if (frameRef.current) cancelAnimationFrame(frameRef.current);
+    const progress = map.getSource("progress") as GeoJSONSource;
+
+    const step = () => {
+      const f = flightRef.current;
+      if (!f) return;
+      // Position comes from the wall clock, so every viewer sees the same spot.
+      // Great-circle points are evenly spaced, so array progress == distance flown.
+      const total = totalKm(f);
+      const km = kmFlown(f, Date.now());
+      const t = total ? km / total : 1;
+      const { idx, a, b, here } = pointAlong(path, t);
+
+      progress.setData(lineFeature([...path.slice(0, idx + 1), here]));
+      flyer.setLngLat(here).setRotation(bearing(a, b));
+      if (clockRef.current) {
+        const kmh = birdOf(f).kmh;
+        const kmText = `${Math.round(km).toLocaleString()} of ${Math.round(total).toLocaleString()} km`;
+        clockRef.current.textContent =
+          t < 1
+            ? `${formatDuration(flightHours(km, kmh))} / ${formatDuration(flightHours(total, kmh))} · ${kmText}`
+            : `Landed after ${formatDuration(flightHours(total, kmh))}`;
+      }
+
+      frameRef.current = t < 1 ? requestAnimationFrame(step) : null;
+    };
+    frameRef.current = requestAnimationFrame(step);
+  }
+
+  // Resume a flight from a shared link, or from this browser's last flight.
+  const onMapReady = useEffectEvent(() => {
+    const saved = loadFlight();
+    if (!saved) return;
+    setFrom(saved.from.name);
+    setTo(saved.to.name);
+    setBird(birdOf(saved));
+    speedRef.current = saved.speed;
+    setSpeedExp(Math.log10(saved.speed));
+    commit(saved);
+    showFlight(saved, { focusBird: true });
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -113,6 +219,7 @@ export default function FlightMap() {
           paint: { "line-color": "#facc15", "line-width": 3.5 },
         });
         setReady(true);
+        onMapReady();
       });
     })();
 
@@ -124,78 +231,17 @@ export default function FlightMap() {
     };
   }, []);
 
-  function animate() {
-    const map = mapRef.current;
-    const flyer = markersRef.current[2];
-    const path = pathRef.current;
-    if (!map || !flyer || path.length < 2) return;
-
-    if (frameRef.current) cancelAnimationFrame(frameRef.current);
-    const progress = map.getSource("progress") as GeoJSONSource;
-    // Great-circle points are evenly spaced, so progress along the array is
-    // proportional to distance flown at a constant cruise speed.
-    const totalKm = distanceKm(path[0], path[path.length - 1]);
-    let kmFlown = 0;
-    let hoursElapsed = 0;
-    let last: number | null = null;
-
-    const step = (now: number) => {
-      const kmh = birdRef.current?.kmh ?? 1;
-      const dtHours = ((now - (last ?? now)) * speedRef.current) / 3_600_000;
-      last = now;
-      kmFlown = Math.min(totalKm, kmFlown + dtHours * kmh);
-      hoursElapsed += dtHours;
-      const t = totalKm ? kmFlown / totalKm : 1;
-      const idx = Math.min(path.length - 2, Math.floor(t * (path.length - 1)));
-      const frac = t * (path.length - 1) - idx;
-      const [a, b] = [path[idx], path[idx + 1]];
-      const here: LngLat = [a[0] + (b[0] - a[0]) * frac, a[1] + (b[1] - a[1]) * frac];
-
-      progress.setData(lineFeature([...path.slice(0, idx + 1), here]));
-      flyer.setLngLat(here).setRotation(bearing(a, b));
-      if (clockRef.current) {
-        const totalHours = hoursElapsed + flightHours(totalKm - kmFlown, kmh);
-        clockRef.current.textContent = `${formatDuration(hoursElapsed)} / ${formatDuration(totalHours)}`;
-      }
-
-      if (t < 1) frameRef.current = requestAnimationFrame(step);
-    };
-    frameRef.current = requestAnimationFrame(step);
-  }
-
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
-    const map = mapRef.current;
-    const mapboxgl = libRef.current;
-    if (!map || !mapboxgl || !bird) return;
+    if (!mapRef.current || !bird) return;
 
     setLoading(true);
     setError(null);
     try {
       const [origin, dest] = await Promise.all([geocode(from, TOKEN), geocode(to, TOKEN)]);
-      const path = greatCircle(origin.coords, dest.coords);
-      pathRef.current = path;
-
-      markersRef.current.forEach((m) => m.remove());
-      const flyerEl = document.createElement("div");
-      flyerEl.innerHTML = bird.svg;
-      markersRef.current = [
-        new mapboxgl.Marker({ color: "#22c55e" }).setLngLat(path[0]).addTo(map),
-        new mapboxgl.Marker({ color: "#ef4444" }).setLngLat(path[path.length - 1]).addTo(map),
-        new mapboxgl.Marker({ element: flyerEl, rotationAlignment: "map" }).setLngLat(path[0]).addTo(map),
-      ];
-
-      (map.getSource("route") as GeoJSONSource).setData(lineFeature(path));
-      (map.getSource("progress") as GeoJSONSource).setData(lineFeature([]));
-
-      const bounds = path.reduce(
-        (b, p) => b.extend(p),
-        new mapboxgl.LngLatBounds(path[0], path[0]),
-      );
-      map.fitBounds(bounds, { padding: { top: 80, bottom: 80, left: 380, right: 80 }, maxZoom: 9, duration: 1500 });
-      map.once("moveend", animate);
-
-      setTrip({ from: origin, to: dest, km: distanceKm(origin.coords, dest.coords) });
+      const f = restart({ from: origin, to: dest, birdId: bird.id, takeoff: 0, speed: speedRef.current });
+      commit(f);
+      showFlight(f);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -204,12 +250,41 @@ export default function FlightMap() {
   }
 
   function selectBird(next: Bird) {
-    birdRef.current = next;
     setBird(next);
-    // Swap the icon on the map too if a flight is already showing.
+    const f = flightRef.current;
+    if (!f) return;
+    // Keep the current position; the new bird just flies on from here.
+    commit(rebase(f, { birdId: next.id }));
     const flyer = markersRef.current[2];
     if (flyer) flyer.getElement().innerHTML = next.svg;
   }
+
+  function changeSpeed(exp: number) {
+    speedRef.current = 10 ** exp;
+    setSpeedExp(exp);
+    const f = flightRef.current;
+    if (f) commit(rebase(f, { speed: speedRef.current }));
+  }
+
+  function replay() {
+    const f = flightRef.current;
+    if (!f) return;
+    commit(restart(f));
+    animate();
+  }
+
+  async function copyLink() {
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setError("Couldn't copy. Copy the link from the address bar instead.");
+    }
+  }
+
+  const flightBird = flight && birdOf(flight);
+  const flightKm = flight ? totalKm(flight) : 0;
 
   return (
     <div className={styles.wrapper}>
@@ -249,47 +324,50 @@ export default function FlightMap() {
 
         {/* Hidden for now; flights play in real time (1×). */}
         <div hidden>
-        <label className={styles.label}>
-          Time-lapse · {formatSpeed(speed)}
-          <input
-            className={styles.slider}
-            type="range"
-            min={0}
-            max={MAX_SPEED_EXP}
-            step={0.01}
-            value={speedExp}
-            onChange={(e) => {
-              const exp = Number(e.target.value);
-              speedRef.current = 10 ** exp;
-              setSpeedExp(exp);
-            }}
-          />
-          <span className={styles.hint}>
-            {bird ? `${bird.name} · ${bird.kmh} km/h (${toMph(bird.kmh)} mph) · ` : ""}
-            {describeSecond(speed)}
-          </span>
-        </label>
+          <label className={styles.label}>
+            Time-lapse · {formatSpeed(speed)}
+            <input
+              className={styles.slider}
+              type="range"
+              min={0}
+              max={MAX_SPEED_EXP}
+              step={0.01}
+              value={speedExp}
+              onChange={(e) => changeSpeed(Number(e.target.value))}
+            />
+            <span className={styles.hint}>
+              {bird ? `${bird.name} · ${bird.kmh} km/h (${toMph(bird.kmh)} mph) · ` : ""}
+              {describeSecond(speed)}
+            </span>
+          </label>
         </div>
 
         {!TOKEN && <p className={styles.error}>Missing NEXT_PUBLIC_MAPBOX_TOKEN in .env.local</p>}
         {error && <p className={styles.error}>{error}</p>}
-        {trip && bird && (
+        {flight && flightBird && (
           <div className={styles.trip}>
-            <p><span className={styles.dotGreen} /> {trip.from.name}</p>
-            <p><span className={styles.dotRed} /> {trip.to.name}</p>
+            <p><span className={styles.dotGreen} /> {flight.from.name}</p>
+            <p><span className={styles.dotRed} /> {flight.to.name}</p>
             <p className={styles.distance}>
-              {Math.round(trip.km).toLocaleString()} km · {Math.round(trip.km * 0.621371).toLocaleString()} mi
+              {Math.round(flightKm).toLocaleString()} km · {Math.round(flightKm * 0.621371).toLocaleString()} mi
             </p>
             <p>
-              {bird.name} flight time: {formatDuration(flightHours(trip.km, bird.kmh))}
-              {speed > 1.05 && <> · on screen: {formatScreenTime(flightHours(trip.km, bird.kmh) / speed)}</>}
+              {flightBird.name} flight time: {formatDuration(flightHours(flightKm, flightBird.kmh))}
+              {flight.speed > 1.05 && (
+                <> · on screen: {formatScreenTime(flightHours(flightKm, flightBird.kmh) / flight.speed)}</>
+              )}
             </p>
             <p className={styles.clock}>
-              Elapsed <span ref={clockRef}>0m / {formatDuration(flightHours(trip.km, bird.kmh))}</span>
+              <span ref={clockRef}>Taking off…</span>
             </p>
-            <button type="button" className={styles.link} onClick={animate}>
-              Replay flight
-            </button>
+            <div className={styles.actions}>
+              <button type="button" className={styles.link} onClick={copyLink}>
+                {copied ? "Link copied!" : "Copy share link"}
+              </button>
+              <button type="button" className={styles.link} onClick={replay}>
+                Restart flight
+              </button>
+            </div>
           </div>
         )}
       </form>
