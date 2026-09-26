@@ -14,6 +14,8 @@ export type Flight = {
   takeoff: number;
   /** Time-lapse multiplier (1 = real time). */
   speed: number;
+  /** Sealed message stored in Redis, revealed on landing. */
+  messageId?: string;
 };
 
 const STORAGE_KEY = "flyover:flight";
@@ -22,9 +24,14 @@ const MS_PER_HOUR = 3_600_000;
 export const birdOf = (f: Flight): Bird => BIRDS.find((b) => b.id === f.birdId)!;
 export const totalKm = (f: Flight) => distanceKm(f.from.coords, f.to.coords);
 
-export function kmFlown(f: Flight, now: number): number {
+export function kmFlown(f: Flight, now = Date.now()): number {
   const hours = ((now - f.takeoff) / MS_PER_HOUR) * f.speed;
   return Math.min(totalKm(f), Math.max(0, hours * birdOf(f).kmh));
+}
+
+/** Epoch ms at which the bird reaches its destination. */
+export function arrivalTime(f: Flight): number {
+  return f.takeoff + (totalKm(f) / (birdOf(f).kmh * f.speed)) * MS_PER_HOUR;
 }
 
 /**
@@ -65,6 +72,7 @@ export function toSearchParams(f: Flight): URLSearchParams {
     t: String(Math.round(f.takeoff)),
   });
   if (f.speed !== 1) params.set("x", String(f.speed));
+  if (f.messageId) params.set("msg", f.messageId);
   return params;
 }
 
@@ -74,6 +82,7 @@ export function fromSearchParams(params: URLSearchParams): Flight | null {
   const to = parseCoords(params.get("to"));
   const takeoff = Number(params.get("t"));
   const speed = Number(params.get("x") ?? 1);
+  const messageId = params.get("msg");
   if (!bird || !from || !to || !Number.isFinite(takeoff) || !(speed > 0)) return null;
 
   return {
@@ -82,6 +91,7 @@ export function fromSearchParams(params: URLSearchParams): Flight | null {
     birdId: bird.id,
     takeoff,
     speed,
+    ...(messageId && /^[0-9a-f-]{36}$/.test(messageId) ? { messageId } : {}),
   };
 }
 
@@ -95,6 +105,16 @@ export function saveFlight(f: Flight) {
     localStorage.setItem(STORAGE_KEY, params.toString());
   } catch {
     // Storage can be blocked (private mode, disabled site data); the URL still works.
+  }
+}
+
+/** Forget the current flight: plain base URL and nothing to resume. */
+export function clearSavedFlight() {
+  window.history.replaceState(null, "", window.location.pathname);
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+  } catch {
+    // Nothing to clear if storage is unavailable.
   }
 }
 
