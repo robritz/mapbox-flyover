@@ -223,3 +223,45 @@
 .bubble:global(.mapboxgl-popup-anchor-bottom) :global(.mapboxgl-popup-tip) {
   border-top-color: #f8fafc;
 }
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.body[hidden] {
+  display: none;
+}
+
+.collapse {
+  display: flex;
+  flex-shrink: 0;
+  padding: 4px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: #94a3b8;
+  cursor: pointer;
+}
+
+.collapse:hover {
+  background: #1e293b;
+  color: #f8fafc;
+}
+
+/* Chevron points up when open ("collapse"), down when collapsed ("expand"). */
+.collapse[aria-expanded="false"] svg {
+  transform: rotate(180deg);
+}
+
+.collapse svg {
+  transition: transform 0.2s ease;
+}

@@ -108,6 +108,7 @@ export default function FlightMap() {
   const speed = 10 ** speedExp;
   const [flight, setFlight] = useState<Flight | null>(null);
   const [copied, setCopied] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
   const [message, setMessage] = useState("");
   const [delivered, setDelivered] = useState(false);
   const [landed, setLanded] = useState(false);
@@ -398,122 +399,140 @@ export default function FlightMap() {
       {/* autoComplete="off" stops Firefox restoring form state (e.g. the Fly
           button's `disabled`) on reload, which caused a hydration mismatch. */}
       <form className={styles.panel} onSubmit={onSubmit} autoComplete="off">
-        <h1 className={styles.title}>
-          {!flight ? "Send a Message" : landed ? "Message Arrived!" : "Carrier in Flight"}
-        </h1>
-        {/* The form is only for planning; once a flight exists, show just its stats. */}
-        {!flight && (
-          <>
-            <div className={styles.tiles} role="radiogroup" aria-label="Bird">
-              {BIRDS.map((b) => (
-                <button
-                  key={b.id}
-                  type="button"
-                  role="radio"
-                  aria-checked={bird?.id === b.id}
-                  className={`${styles.tile} ${bird?.id === b.id ? styles.tileSelected : ""}`}
-                  onClick={() => setBird(b)}
-                >
-                  <span className={styles.tileIcon} dangerouslySetInnerHTML={{ __html: b.svg }} />
-                  <span className={styles.tileName}>{b.name}</span>
-                  <span className={styles.tileSpeed}>
-                    {b.kmh} km/h · {toMph(b.kmh)} mph
-                  </span>
-                </button>
-              ))}
-            </div>
-            <label className={styles.label}>
-              From
-              <input className={styles.input} value={from} onChange={(e) => setFrom(e.target.value)} required />
-            </label>
-            <label className={styles.label}>
-              To
-              <input className={styles.input} value={to} onChange={(e) => setTo(e.target.value)} required />
-            </label>
-            <label className={styles.label}>
-              Message
-              <textarea
-                className={`${styles.input} ${styles.textarea}`}
-                value={message}
-                onChange={(e) => setMessage(e.target.value)}
-                maxLength={MAX_MESSAGE_LENGTH}
-                rows={3}
-                placeholder="The bird will say this when it lands"
-                required
-              />
-              {message && (
-                <span className={styles.hint}>
-                  {message.length}/{MAX_MESSAGE_LENGTH} · sealed until the bird lands
-                </span>
-              )}
-            </label>
-            <button className={styles.button} type="submit" disabled={!ready || loading || !bird || !message.trim()}>
-              {loading
-                ? "Finding…"
-                : !bird
-                  ? "Pick a bird to fly"
-                  : !message.trim()
-                    ? "Write a message to fly"
-                    : `Fly the ${bird.name.toLowerCase()}`}
-            </button>
-          </>
-        )}
-
-        {/* Hidden for now; flights play in real time (1×). */}
-        <div hidden>
-          <label className={styles.label}>
-            Time-lapse · {formatSpeed(speed)}
-            <input
-              className={styles.slider}
-              type="range"
-              min={0}
-              max={MAX_SPEED_EXP}
-              step={0.01}
-              value={speedExp}
-              onChange={(e) => changeSpeed(Number(e.target.value))}
-            />
-            <span className={styles.hint}>
-              {bird ? `${bird.name} · ${bird.kmh} km/h (${toMph(bird.kmh)} mph) · ` : ""}
-              {describeSecond(speed)}
-            </span>
-          </label>
+        <div className={styles.header}>
+          <h1 className={styles.title}>
+            {!flight ? "Send a Message" : landed ? "Message Arrived!" : "Carrier in Flight"}
+          </h1>
+          <button
+            type="button"
+            className={styles.collapse}
+            onClick={() => setCollapsed((c) => !c)}
+            aria-expanded={!collapsed}
+            aria-controls="panel-body"
+            aria-label={collapsed ? "Expand panel" : "Collapse panel"}
+          >
+            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+              <path d="M6 15l6-6 6 6" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
         </div>
 
-        {!TOKEN && <p className={styles.error}>Missing NEXT_PUBLIC_MAPBOX_TOKEN in .env.local</p>}
-        {error && <p className={styles.error}>{error}</p>}
-        {flight && flightBird && (
-          <div className={styles.trip}>
-            <p><span className={styles.dotGreen} /> {flight.from.name}</p>
-            <p><span className={styles.dotRed} /> {flight.to.name}</p>
-            <p className={styles.distance}>
-              {Math.round(flightKm).toLocaleString()} km · {Math.round(flightKm * 0.621371).toLocaleString()} mi
-            </p>
-            <p>
-              {flightBird.name} flight time: {formatDuration(flightHours(flightKm, flightBird.kmh))}
-              {flight.speed > 1.05 && (
-                <> · on screen: {formatScreenTime(flightHours(flightKm, flightBird.kmh) / flight.speed)}</>
-              )}
-            </p>
-            <p className={styles.clock}>
-              <span ref={clockRef}>Taking off…</span>
-            </p>
-            {flight.messageId && (
-              <p className={styles.sealed}>
-                {delivered
-                  ? "✉ Message delivered"
-                  : "✉ Sealed message on board. It will appear when the bird lands."}
-              </p>
-            )}
-            <div className={styles.actions}>
-              <button type="button" className={styles.link} onClick={copyLink}>
-                {copied ? "Link copied!" : "Copy share link"}
+        {/* Hidden rather than unmounted so the live clock keeps its text while collapsed. */}
+        <div id="panel-body" className={styles.body} hidden={collapsed}>
+          {/* The form is only for planning; once a flight exists, show just its stats. */}
+          {!flight && (
+            <>
+              <div className={styles.tiles} role="radiogroup" aria-label="Bird">
+                {BIRDS.map((b) => (
+                  <button
+                    key={b.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={bird?.id === b.id}
+                    className={`${styles.tile} ${bird?.id === b.id ? styles.tileSelected : ""}`}
+                    onClick={() => setBird(b)}
+                  >
+                    <span className={styles.tileIcon} dangerouslySetInnerHTML={{ __html: b.svg }} />
+                    <span className={styles.tileName}>{b.name}</span>
+                    <span className={styles.tileSpeed}>
+                      {b.kmh} km/h · {toMph(b.kmh)} mph
+                    </span>
+                  </button>
+                ))}
+              </div>
+              <label className={styles.label}>
+                From
+                <input className={styles.input} value={from} onChange={(e) => setFrom(e.target.value)} required />
+              </label>
+              <label className={styles.label}>
+                To
+                <input className={styles.input} value={to} onChange={(e) => setTo(e.target.value)} required />
+              </label>
+              <label className={styles.label}>
+                Message
+                <textarea
+                  className={`${styles.input} ${styles.textarea}`}
+                  value={message}
+                  onChange={(e) => setMessage(e.target.value)}
+                  maxLength={MAX_MESSAGE_LENGTH}
+                  rows={3}
+                  placeholder="The bird will say this when it lands"
+                  required
+                />
+                {message && (
+                  <span className={styles.hint}>
+                    {message.length}/{MAX_MESSAGE_LENGTH} · sealed until the bird lands
+                  </span>
+                )}
+              </label>
+              <button className={styles.button} type="submit" disabled={!ready || loading || !bird || !message.trim()}>
+                {loading
+                  ? "Finding…"
+                  : !bird
+                    ? "Pick a bird to fly"
+                    : !message.trim()
+                      ? "Write a message to fly"
+                      : `Fly the ${bird.name.toLowerCase()}`}
               </button>
-              <button type="button" className={styles.link} onClick={newFlight}>
-                New flight
-              </button>
-            </div>
+            </>
+          )}
+
+          {/* Hidden for now; flights play in real time (1×). */}
+          <div hidden>
+            <label className={styles.label}>
+              Time-lapse · {formatSpeed(speed)}
+              <input
+                className={styles.slider}
+                type="range"
+                min={0}
+                max={MAX_SPEED_EXP}
+                step={0.01}
+                value={speedExp}
+                onChange={(e) => changeSpeed(Number(e.target.value))}
+              />
+              <span className={styles.hint}>
+                {bird ? `${bird.name} · ${bird.kmh} km/h (${toMph(bird.kmh)} mph) · ` : ""}
+                {describeSecond(speed)}
+              </span>
+            </label>
           </div>
-        )}
+
+          {!TOKEN && <p className={styles.error}>Missing NEXT_PUBLIC_MAPBOX_TOKEN in .env.local</p>}
+          {error && <p className={styles.error}>{error}</p>}
+          {flight && flightBird && (
+            <div className={styles.trip}>
+              <p><span className={styles.dotGreen} /> {flight.from.name}</p>
+              <p><span className={styles.dotRed} /> {flight.to.name}</p>
+              <p className={styles.distance}>
+                {Math.round(flightKm).toLocaleString()} km · {Math.round(flightKm * 0.621371).toLocaleString()} mi
+              </p>
+              <p>
+                {flightBird.name} flight time: {formatDuration(flightHours(flightKm, flightBird.kmh))}
+                {flight.speed > 1.05 && (
+                  <> · on screen: {formatScreenTime(flightHours(flightKm, flightBird.kmh) / flight.speed)}</>
+                )}
+              </p>
+              <p className={styles.clock}>
+                <span ref={clockRef}>Taking off…</span>
+              </p>
+              {flight.messageId && (
+                <p className={styles.sealed}>
+                  {delivered
+                    ? "✉ Message delivered"
+                    : "✉ Sealed message on board. It will appear when the bird lands."}
+                </p>
+              )}
+              <div className={styles.actions}>
+                <button type="button" className={styles.link} onClick={copyLink}>
+                  {copied ? "Link copied!" : "Copy share link"}
+                </button>
+                <button type="button" className={styles.link} onClick={newFlight}>
+                  New flight
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       </form>
     </div>
   );
