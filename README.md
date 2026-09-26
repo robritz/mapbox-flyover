@@ -2,9 +2,12 @@
 
 My good friend Matthew and I sometimes take longer than we'd like to respond to messages. I made the joke, "Let's just pretend we're using carrier pigeons! That way its less embarrassing!"
 
-This is a fun-hearted POC built in Next.js using the <a href="https://www.mapbox.com/">Mapbox API</a>.
+This is a fun-hearted POC built in Next.js and hosted on Vercel. Maps via the <a href="https://www.mapbox.com/">Mapbox API</a>.
 
-<img width="1469" height="1200" alt="image" src="https://github.com/user-attachments/assets/e65e38eb-2044-40ef-ab7e-f2369976c867" />
+Play with it here: https://carriers.robritz.com
+
+<img width="1200" height="798" alt="image" src="https://github.com/user-attachments/assets/f4f2f166-3597-4d1e-9a24-39069c158762" />
+
 
 Choose a bird and set it loose. It will fly from point A to point B at its documented average speed.
 
