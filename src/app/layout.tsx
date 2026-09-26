@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Flyover",
-  description: "Great-circle flight paths between two addresses",
+  title: "Carriers",
+  description: "Send a note using a lively messaging service",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

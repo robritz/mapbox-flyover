@@ -191,5 +191,35 @@
 
 .actions {
   display: flex;
-  gap: 16px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.textarea {
+  resize: vertical;
+  min-height: 64px;
+  font-family: inherit;
+}
+
+.sealed {
+  color: #cbd5e1;
+}
+
+/* Speech bubble on the map (a mapbox-gl Popup). */
+.bubble :global(.mapboxgl-popup-content) {
+  padding: 10px 14px;
+  border-radius: 16px;
+  background: #f8fafc;
+  color: #0f172a;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+}
+
+.bubble:global(.mapboxgl-popup-anchor-bottom) :global(.mapboxgl-popup-tip) {
+  border-top-color: #f8fafc;
 }
