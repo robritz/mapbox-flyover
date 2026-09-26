@@ -96,16 +96,47 @@ export function fromSearchParams(params: URLSearchParams): Flight | null {
 }
 
 // --- Persistence ------------------------------------------------------------
+// The address bar holds the flight params plus an optional view zoom (`z`).
+// The same string is mirrored to localStorage so the flight survives a reopen.
 
-/** Mirror the flight into the address bar (shareable) and localStorage (reopenable). */
-export function saveFlight(f: Flight) {
-  const params = toSearchParams(f);
+const ZOOM_PARAM = "z";
+
+function writeParams(params: URLSearchParams) {
   window.history.replaceState(null, "", `?${params}`);
   try {
     localStorage.setItem(STORAGE_KEY, params.toString());
   } catch {
     // Storage can be blocked (private mode, disabled site data); the URL still works.
   }
+}
+
+/** Params for the flight to resume. The URL wins so shared links show the sender's flight. */
+function savedParams(): URLSearchParams | null {
+  const url = new URLSearchParams(window.location.search);
+  if (fromSearchParams(url)) return url;
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    return stored ? new URLSearchParams(stored) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Mirror the flight into the address bar (shareable) and localStorage (reopenable). */
+export function saveFlight(f: Flight) {
+  const params = toSearchParams(f);
+  // Keep the viewer's zoom when the flight itself changes (e.g. a restart).
+  const zoom = new URLSearchParams(window.location.search).get(ZOOM_PARAM);
+  if (zoom) params.set(ZOOM_PARAM, zoom);
+  writeParams(params);
+}
+
+/** Record the map zoom alongside the current flight so shared links open at it. */
+export function saveZoom(zoom: number) {
+  const params = new URLSearchParams(window.location.search);
+  if (!fromSearchParams(params)) return; // no flight in the URL, nothing to attach it to
+  params.set(ZOOM_PARAM, zoom.toFixed(2));
+  writeParams(params);
 }
 
 /** Forget the current flight: plain base URL and nothing to resume. */
@@ -118,14 +149,13 @@ export function clearSavedFlight() {
   }
 }
 
-/** The URL wins so shared links always show the sender's flight. */
 export function loadFlight(): Flight | null {
-  const fromUrl = fromSearchParams(new URLSearchParams(window.location.search));
-  if (fromUrl) return fromUrl;
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    return stored ? fromSearchParams(new URLSearchParams(stored)) : null;
-  } catch {
-    return null;
-  }
+  const params = savedParams();
+  return params && fromSearchParams(params);
+}
+
+/** The saved view zoom for the resumed flight, if any. */
+export function loadZoom(): number | null {
+  const zoom = Number(savedParams()?.get(ZOOM_PARAM) ?? NaN);
+  return Number.isFinite(zoom) ? Math.min(22, Math.max(0, zoom)) : null;
 }

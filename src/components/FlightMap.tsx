@@ -11,9 +11,11 @@ import {
   clearSavedFlight,
   kmFlown,
   loadFlight,
+  loadZoom,
   rebase,
   restart,
   saveFlight,
+  saveZoom,
   totalKm,
   type Flight,
 } from "@/lib/flight";
@@ -171,9 +173,10 @@ export default function FlightMap() {
 
   /**
    * Draw the route and markers for `f`, then start animating. A new flight is
-   * framed whole; a resumed one (`focusBird`) starts zoomed in on the bird.
+   * framed whole; a resumed one (`focusBird`) starts centered on the bird, at
+   * `zoom` if given.
    */
-  function showFlight(f: Flight, { focusBird = false } = {}) {
+  function showFlight(f: Flight, { focusBird = false, zoom = BIRD_ZOOM } = {}) {
     const map = mapRef.current;
     const mapboxgl = libRef.current;
     if (!map || !mapboxgl) return;
@@ -197,7 +200,7 @@ export default function FlightMap() {
     if (focusBird) {
       const total = totalKm(f);
       const { here } = pointAlong(path, total ? kmFlown(f) / total : 1);
-      map.jumpTo({ center: here, zoom: BIRD_ZOOM });
+      map.jumpTo({ center: here, zoom });
       animate();
       return;
     }
@@ -256,7 +259,7 @@ export default function FlightMap() {
     speedRef.current = saved.speed;
     setSpeedExp(Math.log10(saved.speed));
     commit(saved);
-    showFlight(saved, { focusBird: true });
+    showFlight(saved, { focusBird: true, zoom: loadZoom() ?? BIRD_ZOOM });
   });
 
   useEffect(() => {
@@ -298,6 +301,11 @@ export default function FlightMap() {
         });
         setReady(true);
         onMapReady();
+      });
+
+      // Keep the zoom in the URL so shared links open at the same zoom.
+      map.on("zoomend", () => {
+        if (flightRef.current) saveZoom(map!.getZoom());
       });
     })();
 
