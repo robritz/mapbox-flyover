@@ -18,7 +18,16 @@ Open http://localhost:3000.
 2. Enter a From and To address and click **Fly**.
 3. The bird flies the route in **real time** at its average cruising speed. The panel shows the distance, the bird's total flight time, and a live elapsed clock.
 
-You can switch birds mid-flight: the icon and speed change immediately and the clock recalculates. **Replay flight** restarts the current route.
+You can switch birds mid-flight: the icon and speed change immediately and the bird carries on from where it is. **Restart flight** sends it back to the origin.
+
+### Sharing and resuming
+
+Clicking **Fly** writes the flight into the address bar, for example `/?bird=pigeon&from=…&to=…&t=<takeoff time>`. The bird's position is always calculated from the takeoff time, so:
+
+- **Copy share link** (or the address bar) gives a link anyone can open to see the bird where it is right now.
+- Closing and reopening the browser resumes your last flight, even from the plain base URL, because it is also saved in this browser's local storage.
+
+Nothing is stored on a server. A shared link doesn't pick up changes made after it was copied (such as switching birds); copy a fresh link after changing it.
 
 | Bird | Speed used | Typical cruising range |
 |---|---|---|
@@ -37,4 +46,5 @@ A logarithmic time-lapse slider (1× to 100,000×) is built in but hidden, and t
 - `src/lib/birds.ts`: each bird's name, cruising speed, and top-down SVG icon. The icons point north so the map marker can rotate to the direction of travel.
 - `src/lib/geocode.ts`: turns each address into coordinates with the Mapbox Geocoding v6 API.
 - `src/lib/geo.ts`: computes the great-circle path, distance, and heading. Longitudes are unwrapped so routes crossing the date line stay continuous.
-- `src/components/FlightMap.tsx`: the Mapbox GL globe, bird tiles, dashed full route, solid "flown" line, and the rotating bird marker. Each frame advances the bird by distance flown at the selected bird's speed.
+- `src/lib/flight.ts`: the flight record (route, bird, takeoff time, speed), its URL encoding, saving to local storage, and the position-from-clock math.
+- `src/components/FlightMap.tsx`: the Mapbox GL globe, bird tiles, dashed full route, solid "flown" line, and the rotating bird marker. Each frame places the bird from the wall clock, so every viewer sees the same position.
